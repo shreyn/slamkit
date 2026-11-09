@@ -215,3 +215,74 @@ std::vector<Pose2D> optimize_sparse(std::vector<Pose2D> poses, std::vector<Edge>
 
     return poses;
 }
+
+//Levenberg-Marquardt:
+std::vector<Pose2D> optimize_lm(std::vector<Pose2D> poses, const std::vector<Edge>& edges, int max_iters) {
+    int num_poses = poses.size();
+
+    //damping dial (start small: nearly Gauss-Newton)
+    double lambda = 1.0e-3;
+
+    double curr_cost = total_cost(poses, edges);
+
+    for (int iter = 1; iter <= max_iters; iter++) {
+        //build H, b at the current poses (once per iteration)
+        SparseLinearSystem system = build_sparse_linear_system(poses, edges);
+
+        //fix dot 0 (make it extremely hard to move)
+        for (int k = 0; k < 3; k++) {
+            system.H.coeffRef(k, k) += 1.0e8;
+        }
+
+        // how stiff each unknown is on its own (the diagonal of H)
+        Eigen::VectorXd diagonal_of_H = system.H.diagonal();
+
+        // keep raising lambda until we find a step that lowers the cost
+        bool step_accepted = false;
+        Eigen::VectorXd delta;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            Eigen::SparseMatrix<double> damped_H = system.H;
+            for (int k = 0; k < 3 * num_poses; k++) {
+                damped_H.coeffRef(k, k) += lambda * diagonal_of_H(k);
+            }
+
+            Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
+            solver.compute(damped_H);
+            if (solver.info() != Eigen::Success) {
+                lambda *= 10.0; // factorization failed: more damping
+                continue;
+            }
+            delta = solver.solve(-system.b);
+
+            std::vector<Pose2D> candidate = poses;
+            for (int i = 0; i < num_poses; i++) {
+                candidate[i].x += delta(3*i);
+                candidate[i].y += delta(3*i + 1);
+                candidate[i].theta = wrap_angle(candidate[i].theta + delta(3*i + 2));
+            }
+            double candidate_cost = total_cost(candidate, edges);
+
+            if (candidate_cost < curr_cost) {
+                // better: keep it, and trust the model more
+                poses = candidate;
+                curr_cost = candidate_cost;
+                lambda /= 10.0;
+                step_accepted = true;
+                break;
+            }
+            //worse: throw it away, trust the model less, try again
+            lambda *= 10.0;
+        }
+
+        if (iter <= 5 || iter % 20 == 0) {
+            std::cout << "iteration " << iter << ": cost = " << curr_cost << "  lambda = " << lambda << "\n";
+        }
+
+        //nothing accepted after 10 tries, or step is small, break
+        if (!step_accepted || delta.norm() < 1.0e-6) {
+            break;
+        }
+    }
+
+    return poses;
+}

@@ -204,6 +204,23 @@ Write residuals, find poses that minimize their weighted sum of squares.
 4. Apply $\Delta$, repeat.
 5. Stop when threshold reached. 
 
+### Levenberg-Marquardt
+Problem: Guass Newton can overshoot
+- Replaces real cost with simple bowl-shaped model, jumps straight to bottom of that bowl.
+- This is only safe if the bowl is a good representative of the real cost.
+
+Solution: add one number $\lambda$ (damping):
+$(H + \lambda I) \delta = -b$.
+- $\lambda$ small: same as Gauss Newtown (big, confident steps)
+- $\lambda$ big: small, careful steps.
+
+How to pick lambda?
+1. Solve $(H+\lambda I)\delta$.
+2. Try the step, compute new cost.
+3. If the cost went down, accept the step, make $\lambda$ smaller (trust model more).
+4. If cost went up, reject the step, make $\lambda$ larger (trust model less), try again.
+
+
 ### Sparsity
 The matrix $J^TJ$ is mostly zeros, can exploit.
 
@@ -311,3 +328,89 @@ Rubber band:
   - 0 1: from dot 0, to dot 1
   - 1.0 0.0 0.05: measurement (x, y, theta)
   - 500 0 0 500 0 800: trust table (upper triangle, so only needs 6 of 9)
+
+
+
+# ROS2
+Library that handles:
+- finding other programs
+- standard way to define messages
+- delivering data between processes and machines
+- tools to inspect and record it all
+
+## Nodes
+Small program with one job (process)
+- has a name, and a set of connections
+
+Steps of a node:
+1. init (join ROS2)
+2. create node
+3. spin(node): run, wait for events
+4. leave ROS2
+
+When a node starts, it announces itself.  It also listens for everyone else's announcements.
+
+## Topics and messages
+Topic: named channel. 
+- Nodes put messages into it, take messages out of it
+- Topic names: looks liek a file path
+- Queue size: if the publisher sends messages faster than the subscriber can handle, the messages wait in a queue.
+  - Queue size of 10 means "keep up to 10 messages in queue, drop oldest beyond that"
+Message: a struct
+
+
+## Services and actions
+A topic is a stream (nobody replies)
+- good for sensor readings, poses.
+
+Service:
+Question and answer.
+- One node (client) sends a request, another node (server) sends response.
+- Used for a short job, need exactly one answer.
+
+Action:
+A long job with progress and cancelling
+1. Client sends goal to server.
+2. Server sends repeated feedback to client.
+3. Server sends result to client (success / failure)
+4. Client can cancel
+
+
+## Paramaters
+Named setting that belongs to one node. Has a name, type, and default value.
+
+- Can tune live (watching results)
+
+## Packages, workspaces, building
+
+Package: one folder holding code, plus two files saying what it is and how to build it
+- slam_demo/ : package folder
+  - package.xml : name, version, dependencies
+  - setup.py : how to build / install it
+  - slam_dmo/ : python code
+    - my_publisher.py
+    - my_subscriber.py
+
+Workspace: a folder that holds several packages and the build output
+- packages go inside a src/ folder (only write these)
+- other things are generated, like build/ in CMake
+- colcon: build tool
+
+## Launch Files
+Short python file that says "start these nodes, with these names, params"
+
+Namespaces: two drones run the same code. A namespace is a prefix put in front of the node name and its topics.
+
+
+## Wrapping slamkit into ROS2
+The EKF demo is one program (simulate).
+We want to create seperate nodes that talk over topics
+![alt text](image-1.png)
+
+1. Simulator_node: robot and its sensors
+- noisy wheel data
+- noisy landmark readings (measurements)
+
+2. Ekf_node: listens to those two topics, runs ekf_predict, update, publishes its estimate on /ekf_pose.
+
+3. Evaluator_node: compares estimate with truth

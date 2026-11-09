@@ -27,22 +27,19 @@ int main(int argc, char** argv) {
     //cost before optimizing
     std::cout << "Starting cost: " << total_cost(graph.poses, graph.edges) << "\n\n";
 
-    //optimize
-    std::vector<Pose2D> poses = graph.poses;
-    for (int iteration = 1; iteration <= 20; iteration++) { //20 now, M3500 may need more than 10
-        auto start_time = std::chrono::steady_clock::now();
-        poses = optimize_sparse(poses, graph.edges, 1); //sparse now
-        auto end_time = std::chrono::steady_clock::now();
+    //optimize with Levenberg-Marquardt (prints one line per iteration)
+    auto start_time = std::chrono::steady_clock::now();
+    std::vector<Pose2D> poses = optimize_lm(graph.poses, graph.edges, 2000);
+    auto end_time = std::chrono::steady_clock::now();
 
-        double seconds = std::chrono::duration<double>(end_time - start_time).count();
-        double cost = total_cost(poses, graph.edges);
-        std::cout << "iteration " << iteration << ": cost = " << cost << "  (" << seconds << " s)\n";
+    double seconds = std::chrono::duration<double>(end_time - start_time).count();
+    double final_cost = total_cost(poses, graph.edges);
+    std::cout << "\nFinal cost: " << final_cost << "  (" << seconds << " s total)\n";
 
-        //stop if the optimizer blew up
-        if (std::isnan(cost)) {
-            std::cout << "Cost is not a number: the optimizer diverged.\n";
-            break;
-        }
+    //stop if the optimizer blew up
+    if (std::isnan(final_cost)) {
+        std::cout << "Cost is not a number: the optimizer diverged.\n";
+        return 1;
     }
 
     //save for plots

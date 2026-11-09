@@ -1,7 +1,20 @@
+# build output
 build/
-.DS_Store
-.vscode/
+build_linux/
+install/
+log/
+
+# generated data (the README shows how to regenerate it)
 *.csv
 *.png
 !docs/*.png
 data/*.g2o
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# editors and OS
+.DS_Store
+.vscode/

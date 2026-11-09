@@ -2,8 +2,9 @@
 
 A C++17 library for robot state estimation: a simulator, Extended
 Kalman Filter (EKF) localization with statistical consistency testing, and 2D
-pose-graph SLAM with a sparse Gauss-Newton optimizer. The optimizer reads
-standard g2o files and runs on the Intel and M3500 benchmark datasets.
+pose-graph SLAM with sparse Gauss-Newton and Levenberg-Marquardt optimizers.
+The optimizers read standard g2o files and run on the Intel and M3500 benchmark
+datasets.
 
 | Intel Research Lab | M3500 |
 |---|---|
@@ -33,7 +34,9 @@ reference library:
 - **Consistency testing**: NEES averaged over 100 Monte Carlo runs and compared
   with chi-square bounds.
 - **Pose-graph SLAM**: per-edge residuals and analytic Jacobians on SE(2),
-  per-edge information matrices, Gauss-Newton with a pinned first pose.
+  per-edge information matrices, and a pinned first pose.
+- **Two optimizers**: Gauss-Newton, and Levenberg-Marquardt with Marquardt
+  damping and accept/reject step control.
 - **Dense and sparse solvers**: the same system solved with a dense LDL^T and
   with Eigen's sparse `SimplicialLDLT` (automatic fill-reducing ordering).
 - **g2o loader** for 2D datasets (`VERTEX_SE2`, `EDGE_SE2`).
@@ -57,7 +60,7 @@ error stays near 0.1 m throughout.
 
 ### EKF consistency (NEES)
 
-Averaged over 1000 Monte Carlo runs, the EKF's NEES stays near 3, the ideal
+Averaged over 100 Monte Carlo runs, the EKF's NEES stays near 3, the ideal
 value for a 3-dimensional state, and stays inside the 95% chi-square band
 except for the few steps expected by chance. The filter's reported uncertainty
 matches its actual error.
@@ -66,14 +69,33 @@ matches its actual error.
 
 ### Pose-graph SLAM on benchmark datasets
 
-| Dataset | Poses | Edges | Start cost | Converged cost | Iterations |
-|---|---|---|---|---|---|
-| Intel | 1,228 | 1,483 | 5.83e6 | 214.171 | 5 |
-| M3500 | 3,500 | 5,453 | 2.57e6 | 137.913 | 5 |
+| Dataset | Poses | Edges | Start cost | Converged cost |
+|---|---|---|---|---|
+| Intel | 1,228 | 1,483 | 5.83e6 | 214.171 |
+| M3500 | 3,500 | 5,453 | 2.57e6 | 137.913 |
 
-Cost is the sum of `r^T Ω r` over all edges. Both runs use plain Gauss-Newton
-with the first pose pinned. Intel's file has 256 loop-closure edges beyond the
-1,227 odometry edges.
+Cost is the sum of `r^T Ω r` over all edges. Both optimizers reach the same
+converged cost on both datasets. The first pose is pinned. Intel's file has 256
+loop-closure edges beyond the 1,227 odometry edges.
+
+### Gauss-Newton vs Levenberg-Marquardt
+
+| Method | Intel iterations | Intel behavior | M3500 iterations |
+|---|---|---|---|
+| Gauss-Newton | 5 | cost rises from 5.8e6 to 1.4e8 in the first two iterations, then recovers | 5 |
+| LM, flat damping (`H + λI`) | not converged | cost 27,653 after 500 iterations | n/a |
+| LM, Marquardt damping (`H + λ·diag(H)`) | about 1,700 (2.5 s) | cost never increases | under 40 (0.27 s) |
+
+Gauss-Newton is the fastest here, but it is not safe: on Intel it only works
+because the early overshoot happens to recover. Levenberg-Marquardt keeps the
+cost decreasing at every iteration, at the price of many more iterations on
+Intel. Both end at the same cost (214.171 on Intel, 137.913 on M3500).
+
+Damping matters. With a flat `λI`, the heading unknowns (whose Hessian entries
+are large because errors are multiplied by distance) and the position unknowns
+need very different amounts of damping, so one `λ` over-damps most of the
+problem. Scaling the damping by `diag(H)` fixed this: at the same 500-iteration
+mark, the Intel cost was 1,892 instead of 27,653.
 
 ### Sparse vs dense solve
 
@@ -143,6 +165,8 @@ python python_plotting/plot_nees.py
 ./build/pose_graph_demo
 
 # Pose graph: g2o datasets (download them first, see below)
+# g2o_demo uses Levenberg-Marquardt (optimize_lm). Gauss-Newton is available
+# as optimize_sparse.
 ./build/g2o_demo data/input_INTEL_g2o.g2o intel.csv
 ./build/g2o_demo data/input_M3500_g2o.g2o m3500.csv
 python python_plotting/plot_g2o.py intel.csv
@@ -180,14 +204,26 @@ data/              g2o datasets (not committed)
   changing any edge's error.
 - **Sparse assembly from triplets.** Each edge contributes four 3×3 blocks, and
   Eigen sums duplicate entries.
+- **Levenberg-Marquardt with accept/reject steps.** Each step solves
+  `(H + λ·diag(H)) δ = -b` and is kept only if the total cost drops. On success
+  `λ` is divided by 10, otherwise the step is discarded and `λ` is multiplied by
+  10 (up to 10 tries per iteration). Damping is scaled by `diag(H)` because flat
+  `λI` damping stalled on Intel.
 - **Seeded runs** make every simulated plot and number reproducible.
 
 ## Limitations
 
-- **Plain Gauss-Newton, no step control.** On Intel, the first two iterations
+- **Gauss-Newton has no step control.** On Intel, the first two iterations
   overshoot (cost rises from 5.8e6 to 1.4e8) before recovering, so convergence
   there depends on the starting guess. This is also why GTSAM's Gauss-Newton
   fails on the same file.
+- **Levenberg-Marquardt is slow on Intel.** It needs about 1,700 iterations
+  versus 5 for Gauss-Newton. `λ` is changed by fixed factors of 10 instead of
+  being adapted to how well the model predicted the actual drop in cost, which
+  is probably a large part of the slowdown.
+- **No GTSAM reference for Intel.** GTSAM's Gauss-Newton fails on this file, and
+  its Levenberg-Marquardt did not make progress with default settings. I did not
+  tune GTSAM further, so Intel is checked only against our own two optimizers.
 - **Cost function differs from GTSAM's away from the optimum.** The starting
   costs disagree (Intel 5.83e6 vs 6.70e6, M3500 2.57e6 vs 2.63e6), while the
   final M3500 costs agree. I have not established why. One possibility is a
@@ -200,7 +236,7 @@ data/              g2o datasets (not committed)
 
 ## Roadmap
 
-- [ ] Levenberg-Marquardt
+- [ ] Adapt `λ` from the gain ratio (Nielsen's rule) to cut Intel iterations
 - [ ] Robust kernels and false loop closure rejection
 - [ ] Resolve the cost mismatch with GTSAM and validate Intel
 - [ ] Benchmarks (median timings, scaling plot)

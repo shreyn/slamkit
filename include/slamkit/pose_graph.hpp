@@ -69,3 +69,5 @@ struct SparseLinearSystem {
 SparseLinearSystem build_sparse_linear_system(std::vector<Pose2D> poses,  std::vector<Edge> edges);
 
 std::vector<Pose2D> optimize_sparse(std::vector<Pose2D> poses, std::vector<Edge> edges, int max_iters);
+
+std::vector<Pose2D> optimize_lm(std::vector<Pose2D> poses, const std::vector<Edge>& edges, int max_iters);
